@@ -105,52 +105,40 @@ uniform sampler2D uTexture;
 uniform float uTime;
 varying vec2 vUv;
 
-vec2 curveRemapUV(vec2 uv) {
-    // Convert UV from [0,1] to [-1,1]
+vec2 CRTCurveUV(vec2 uv) {
     uv = uv * 2.0 - 1.0;
-    
-    // Apply barrel distortion
-    float barrel = 0.25; // Adjust for more/less curve
-    float r2 = uv.x * uv.x + uv.y * uv.y;
-    uv *= 1.0 + r2 * barrel;
-    
-    // Convert back to [0,1]
-    return (uv * 0.5 + 0.5);
+    vec2 offset = abs(uv.yx) / vec2(4.0, 3.0);
+    uv = uv + uv * offset * offset;
+    uv = uv * 0.5 + 0.5;
+    return uv;
+}
+
+void DrawVignette(inout vec3 color, vec2 uv) {    
+    float vignette = uv.x * uv.y * (1.0 - uv.x) * (1.0 - uv.y);
+    vignette = clamp(pow(16.0 * vignette, 0.4), 0.0, 1.0);
+    color *= vignette;
+}
+
+void DrawScanline(inout vec3 color, vec2 uv) {
+    float scanline = clamp(0.85 + 0.15 * cos(3.14 * uv.y * 240.0 * 1.0), 0.0, 1.0);
+    float grille = 0.75 + 0.25 * clamp(1.5 * cos(3.14 * uv.x * 640.0 * 1.0), 0.0, 1.0);
+    color *= scanline * grille * 1.4;
 }
 
 void main() {
-    vec2 uv = vUv;
+    vec3 color = texture2D(uTexture, vUv).rgb;
+    vec2 crtUV = CRTCurveUV(vUv);
     
-    // Apply screen curvature
-    vec2 curvedUv = curveRemapUV(uv);
-    
-    // Check if we're outside the curved screen bounds
-    if (curvedUv.x < 0.0 || curvedUv.x > 1.0 || curvedUv.y < 0.0 || curvedUv.y > 1.0) {
-        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
+    if (crtUV.x < 0.0 || crtUV.x > 1.0 || crtUV.y < 0.0 || crtUV.y > 1.0) {
+        color = vec3(0.0, 0.0, 0.0);
     }
     
-    // Sample the texture with RGB shift
-    float shift = 0.002;
-    vec4 colorR = texture2D(uTexture, vec2(curvedUv.x + shift, curvedUv.y));
-    vec4 colorG = texture2D(uTexture, curvedUv);
-    vec4 colorB = texture2D(uTexture, vec2(curvedUv.x - shift, curvedUv.y));
+    DrawVignette(color, crtUV);
+    DrawScanline(color, vUv);
     
-    vec4 color = vec4(colorR.r, colorG.g, colorB.b, 1.0);
+    color = color * 1.1;
     
-    // Add scanlines
-    float scanline = sin(curvedUv.y * 800.0) * 0.04;
-    color -= scanline;
-    
-    // Add vertical sync effect
-    float vignette = 1.0 - length(uv - 0.5) * 0.7;
-    color *= vignette;
-    
-    // Add flickering
-    float flicker = 0.95 + 0.05 * sin(uTime * 8.0);
-    color *= flicker;
-    
-    gl_FragColor = color;
+    gl_FragColor = vec4(color, 1.0);
 }
 `;
 
@@ -164,7 +152,7 @@ varying vec2 vUv;
 
 void main() {
     vec2 resolution = vec2(1280.0, 720.0);
-    float pixelSize = 8.0;
+    float pixelSize = 12.0;
     
     vec2 normalizedPixelSize = vec2(pixelSize) / resolution;
     vec2 uvPixel = normalizedPixelSize * floor(vUv / normalizedPixelSize);
@@ -186,29 +174,121 @@ void main() {
 }
 `;
 
+// Crochet effect
+const crochetShader = `
+precision mediump float;
+
+uniform sampler2D uTexture;
+uniform float uTime;
+varying vec2 vUv;
+
+float random(vec2 st) {
+    return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+}
+
+vec3 rgbToHsv(vec3 c) {
+    vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+    vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+    vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
+vec3 hsvToRgb(vec3 c) {
+    vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+
+float noise(vec2 st) {
+    vec2 i = floor(st);
+    vec2 f = fract(st);
+
+    float a = random(i);
+    float b = random(i + vec2(1.0, 0.0));
+    float c = random(i + vec2(0.0, 1.0));
+    float d = random(i + vec2(1.0, 1.0));
+
+    vec2 u = f * f * (3.0 - 2.0 * f);
+
+    return mix(a, b, u.x) +
+           (c - a) * u.y * (1.0 - u.x) +
+           (d - b) * u.x * u.y;
+}
+
+void main() {
+    float pixelSize = 16.0;
+    vec2 resolution = vec2(1280.0, 720.0);
+    vec2 normalizedPixelSize = vec2(pixelSize) / resolution;
+    vec2 uvPixel = normalizedPixelSize * floor(vUv / normalizedPixelSize);
+    vec4 color = texture2D(uTexture, uvPixel);
+
+    vec2 cellPosition = floor(vUv / normalizedPixelSize);
+    vec2 cellUV = fract(vUv / normalizedPixelSize);
+
+    float rowOffset = sin((random(vec2(0.0, uvPixel.y)) - 0.5) * 0.25);
+    cellUV.x += rowOffset; 
+    vec2 centered = cellUV - 0.5;
+
+    float noiseAmount = 0.18;
+    vec2 noisyCenter = centered + (vec2(
+        random(cellPosition + centered),
+        random(cellPosition + centered)
+    ) - 0.5) * noiseAmount;
+
+    float isAlternate = mod(cellPosition.x, 2.0);
+    float angle = isAlternate == 0.0 ? -1.134464 : 1.134464; // radians(±65.0)
+    
+    vec2 rotated = vec2(
+        noisyCenter.x * cos(angle) - noisyCenter.y * sin(angle),
+        noisyCenter.x * sin(angle) + noisyCenter.y * cos(angle)
+    );
+    
+    float aspectRatio = 1.55;
+    float ellipse = length(vec2(rotated.x, rotated.y * aspectRatio - 0.075));
+    color.rgb *= smoothstep(0.2, 1.0, 1.0 - ellipse);
+    
+    float stripeNoise = noise(vec2(centered.x, centered.y * 100.0)); 
+    color.rgb *= stripeNoise + 0.4;
+
+    float hueShift = (random(cellPosition) - 0.5) * 0.08;
+    vec3 hsv = rgbToHsv(color.rgb);
+    hsv.x += hueShift;
+    color.rgb = hsvToRgb(hsv);
+
+    color.rgb *= smoothstep(0.2, 1.0, 1.0 - ellipse);
+    gl_FragColor = color;
+}
+`;
+
 export const shaders = {
   crt: {
     name: "CRT TV (for Bruno)",
-    code: crtShader
+    code: crtShader,
   },
   waveDistortion: {
     name: "Wave Distortion",
-    code: waveDistortionShader
+    code: waveDistortionShader,
   },
   pixelate: {
     name: "Pixelate",
-    code: pixelateShader
+    code: pixelateShader,
   },
   kaleidoscope: {
     name: "Kaleidoscope",
-    code: kaleidoscopeShader
+    code: kaleidoscopeShader,
   },
   edgeDetection: {
     name: "Edge Detection",
-    code: edgeDetectionShader
+    code: edgeDetectionShader,
   },
   dot: {
     name: "Dot Matrix",
-    code: dotShader
-  }
+    code: dotShader,
+  },
+  crochet: {
+    name: "Crochet Pattern",
+    code: crochetShader,
+  },
 };
