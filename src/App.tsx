@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
-import WebGLCamera from './components/WebGLCamera';
+import React, { useRef, useState } from 'react';
+import WebGLCamera, { WebGLCameraHandle } from './components/WebGLCamera';
 import { Camera, Wand2 } from 'lucide-react';
 import { shaders } from './shaders/fragment';
 
 function App() {
   const [selectedShader, setSelectedShader] = useState<keyof typeof shaders>('crt');
+  const cameraRef = useRef<WebGLCameraHandle>(null);
 
   return (
     <div className="min-h-screen bg-gray-900">
@@ -35,12 +36,18 @@ function App() {
         </div>
 
         <div className="aspect-video rounded-lg overflow-hidden shadow-2xl border-2 border-purple-500/20">
-          <WebGLCamera selectedShader={selectedShader} />
+          <WebGLCamera ref={cameraRef} selectedShader={selectedShader} />
         </div>
         
-        <p className="text-gray-400 text-center mt-4">
-          Select different shader effects to transform your camera feed in real-time using WebGL.
-        </p>
+        <div className="flex justify-center mt-6">
+          <button
+            onClick={() => cameraRef.current?.takePhoto()}
+            className="px-6 py-3 bg-purple-500 hover:bg-purple-600 text-white rounded-full flex items-center gap-2 transition-colors"
+          >
+            <Camera className="w-5 h-5" />
+            Prendre une photo
+          </button>
+        </div>
       </div>
     </div>
   );

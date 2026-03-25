@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
 import { vertexShader } from '../shaders/vertex';
 import { shaders } from '../shaders/fragment';
 
@@ -6,11 +6,26 @@ interface WebGLCameraProps {
   selectedShader: keyof typeof shaders;
 }
 
-const WebGLCamera: React.FC<WebGLCameraProps> = ({ selectedShader }) => {
+export interface WebGLCameraHandle {
+  takePhoto: () => void;
+}
+
+const WebGLCamera = forwardRef<WebGLCameraHandle, WebGLCameraProps>(({ selectedShader }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const programRef = useRef<WebGLProgram | null>(null);
   const glRef = useRef<WebGLRenderingContext | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    takePhoto() {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const link = document.createElement('a');
+      link.download = `photo-${Date.now()}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    },
+  }));
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -18,7 +33,7 @@ const WebGLCamera: React.FC<WebGLCameraProps> = ({ selectedShader }) => {
     if (!canvas || !video) return;
 
     // Set up WebGL context
-    const gl = canvas.getContext('webgl');
+    const gl = canvas.getContext('webgl', { preserveDrawingBuffer: true });
     if (!gl) return;
     glRef.current = gl;
 
@@ -108,7 +123,7 @@ const WebGLCamera: React.FC<WebGLCameraProps> = ({ selectedShader }) => {
       />
     </div>
   );
-};
+});
 
 function createShaderProgram(gl: WebGLRenderingContext, vsSource: string, fsSource: string) {
   const vertexShader = createShader(gl, gl.VERTEX_SHADER, vsSource);
